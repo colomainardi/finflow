@@ -1,17 +1,26 @@
 import express, { Request, Response } from 'express';
-import { supabase } from './supabase';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const PORT = process.env.PORT || 8080;
+// Inicialización de Supabase con variables de entorno
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
+const port = process.env.PORT || 8080;
+
+// Ruta base para verificar que el servicio responda online
 app.get('/', (req: Request, res: Response) => {
-  res.send({ status: 'FinFlow Agent Online 🚀' });
+  res.json({ status: "FinFlow Agent Online 🚀" });
 });
 
-app.post('/webhook', async (req: Request, res: Response) => {
-  // Ahora recibimos 'phone' desde SendPulse en lugar de user_id directo
+// Webhook principal para procesar los datos de SendPulse
+app.post('/webhook', async (req: Request, res: Response): Promise<any> => {
   const { 
     phone,
     amount, 
@@ -25,57 +34,69 @@ app.post('/webhook', async (req: Request, res: Response) => {
     raw_message 
   } = req.body;
 
+  console.log(`[Webhook] Recibida petición para el teléfono: ${phone}, Monto: ${amount}`);
+
+  if (!phone) {
+    return res.status(400).json({ error: 'Falta el campo obligatorio "phone"' });
+  }
+
   try {
-    // 1. Buscamos el UUID del usuario usando su número de teléfono
-    const cleanedPhone = phone.replace(/\D/g, ''); // Limpia caracteres raros del string si los hay
+    // 1. Limpiamos y buscamos el UUID del usuario mediante el teléfono
+    const cleanedPhone = phone.toString().replace(/\D/g, ''); 
+    
     const { data: userData, error: userError } = await supabase
       .from('users')
       .select('id')
       .eq('phone', cleanedPhone)
-      .single();
+      .maybeSingle(); // Evita lanzar excepciones si no encuentra filas
 
     if (userError || !userData) {
-      console.error('Usuario no encontrado para el teléfono:', cleanedPhone, userError);
-      return res.status(404).json({ error: 'Usuario no registrado en FinFlow' });
+      console.error('[Supabase] Usuario no encontrado para el teléfono:', cleanedPhone, userError);
+      return res.status(404).json({ error: 'Usuario no registrado en la base de datos' });
     }
 
     const resolvedUserId = userData.id;
 
-    // 2. Insertamos en la tabla 'transactions' mapeando el UUID obtenido
-    const { data, error } = await supabase
+    // 2. Insertamos la transacción con los datos procesados por la IA
+    const parsedAmount = amount ? parseFloat(amount.toString()) : 0;
+    const parsedCuotas = cuotas ? parseInt(cuotas.toString(), 10) : 1;
+
+    const { data, error: insertError } = await supabase
       .from('transactions')
       .insert([
         { 
           user_id: resolvedUserId, 
-          amount: parseFloat(amount), // Asegura que sea procesado como número numérico
+          amount: parsedAmount, 
           type: type || 'gasto', 
           category: category || 'Otros', 
-          description: description || raw_message, 
-          transaction_date: transaction_date || new Date().toISOString().split('T')[0], 
+          description: description || raw_message || 'Registro desde WhatsApp', 
+          transaction_date: transaction_date || new Date().toISOString(), 
           currency: currency || 'ARS',
           payment_method: payment_method || 'efectivo',
-          cuotas: cuotas ? parseInt(cuotas) : 1,
-          raw_message: raw_message
+          cuotas: parsedCuotas,
+          raw_message: raw_message || ''
         }
       ])
       .select();
 
-    if (error) {
-      console.error('Error al insertar en Supabase:', error);
-      return res.status(500).json({ error: 'Fallo al registrar la transacción en la BD' });
+    if (insertError) {
+      console.error('[Supabase] Error al insertar transacción:', insertError);
+      return res.status(500).json({ error: 'Error al escribir en la tabla de transacciones' });
     }
 
+    console.log('[Supabase] Transacción guardada con éxito con ID:', data[0]?.id);
     return res.status(200).json({
       message: 'Transacción guardada con éxito',
-      id: data[0].id
+      id: data[0]?.id
     });
 
   } catch (err) {
-    console.error('Error inesperado en el webhook:', err);
+    console.error('[Fatal] Error inesperado en el webhook:', err);
     return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+// Arrancar el servidor
+app.listen(port, () => {
+  console.log(`FinFlow Server corriendo exitosamente en el puerto ${port}`);
 });
