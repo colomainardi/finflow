@@ -11,9 +11,9 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.post('/webhook', async (req: Request, res: Response) => {
-  // Extraemos todos los campos que tiene tu tabla
+  // Ahora recibimos 'phone' desde SendPulse en lugar de user_id directo
   const { 
-    user_id, 
+    phone,
     amount, 
     category, 
     description, 
@@ -25,34 +25,55 @@ app.post('/webhook', async (req: Request, res: Response) => {
     raw_message 
   } = req.body;
 
-  // Insertamos en la tabla 'transactions' respetando tu esquema
-  const { data, error } = await supabase
-    .from('transactions')
-    .insert([
-      { 
-        user_id, // UUID del usuario
-        amount, 
-        type: type || 'expense', // Por defecto gasto si no viene
-        category, 
-        description, 
-        transaction_date: transaction_date || new Date().toISOString().split('T')[0], // Fecha actual si no viene
-        currency: currency || 'ARS',
-        payment_method: payment_method || 'cash',
-        cuotas: cuotas || 1,
-        raw_message: raw_message || description, // Guardamos el texto original
-      }
-    ])
-    .select();
+  try {
+    // 1. Buscamos el UUID del usuario usando su número de teléfono
+    const cleanedPhone = phone.replace(/\D/g, ''); // Limpia caracteres raros del string si los hay
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', cleanedPhone)
+      .single();
 
-  if (error) {
-    console.error('Error en Supabase:', error);
-    return res.status(500).json({ error: 'Fallo al registrar la transacción' });
+    if (userError || !userData) {
+      console.error('Usuario no encontrado para el teléfono:', cleanedPhone, userError);
+      return res.status(404).json({ error: 'Usuario no registrado en FinFlow' });
+    }
+
+    const resolvedUserId = userData.id;
+
+    // 2. Insertamos en la tabla 'transactions' mapeando el UUID obtenido
+    const { data, error } = await supabase
+      .from('transactions')
+      .insert([
+        { 
+          user_id: resolvedUserId, 
+          amount: parseFloat(amount), // Asegura que sea procesado como número numérico
+          type: type || 'gasto', 
+          category: category || 'Otros', 
+          description: description || raw_message, 
+          transaction_date: transaction_date || new Date().toISOString().split('T')[0], 
+          currency: currency || 'ARS',
+          payment_method: payment_method || 'efectivo',
+          cuotas: cuotas ? parseInt(cuotas) : 1,
+          raw_message: raw_message
+        }
+      ])
+      .select();
+
+    if (error) {
+      console.error('Error al insertar en Supabase:', error);
+      return res.status(500).json({ error: 'Fallo al registrar la transacción en la BD' });
+    }
+
+    return res.status(200).json({
+      message: 'Transacción guardada con éxito',
+      id: data[0].id
+    });
+
+  } catch (err) {
+    console.error('Error inesperado en el webhook:', err);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
-
-  res.status(200).json({
-    message: 'Transacción guardada con éxito',
-    id: data[0].id
-  });
 });
 
 app.listen(PORT, () => {
