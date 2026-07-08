@@ -20,7 +20,7 @@ try {
   const supabase = createClient(supabaseUrl, supabaseKey);
 
   // Webhook Principal
-  app.post('/webhook', async (req: Request, res: Response) => {
+  app.post('/web*', async (req: Request, res: Response) => {
     // 🔍 CONSOLE.LOG ESTRATÉGICO: Imprime todo lo que manda SendPulse para ver el formato real de los campos
     console.log(`[Webhook] BODY RECIBIDO COMPLETO:`, JSON.stringify(req.body));
 
