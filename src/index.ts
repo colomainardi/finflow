@@ -21,6 +21,9 @@ try {
 
   // Webhook Principal
   app.post('/webhook', async (req: Request, res: Response) => {
+    // 🔍 CONSOLE.LOG ESTRATÉGICO: Imprime todo lo que manda SendPulse para ver el formato real de los campos
+    console.log(`[Webhook] BODY RECIBIDO COMPLETO:`, JSON.stringify(req.body));
+
     const { 
       phone,
       amount, 
@@ -33,8 +36,6 @@ try {
       cuotas, 
       raw_message 
     } = req.body;
-
-    console.log(`[Webhook] Petición recibida para el teléfono: ${phone}`);
 
     if (!phone) {
       res.status(400).json({ error: 'Falta el campo "phone"' });
